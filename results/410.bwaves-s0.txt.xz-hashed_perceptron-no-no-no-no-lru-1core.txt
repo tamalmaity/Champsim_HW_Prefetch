@@ -1,0 +1,16 @@
+
+*** ChampSim Multicore Out-of-Order Simulator ***
+
+Warmup Instructions: 1000000
+Prefetch Warmup Instructions: 10000000
+Simulation Instructions: 12000000
+Number of CPUs: 1
+LLC sets: 2048
+LLC ways: 16
+Off-chip DRAM Size: 4096 MB Channels: 1 Width: 64-bit Data Rate: 3200 MT/s
+
+CPU 0 runs /home/tamal/Downloads/410.bwaves-s0.txt.xz
+Read seed: 1017
+[SQ2] execute_store lq_index: 10 producer_id: 716852 does not match to the store instr_id: 716845
+hashed_perceptron-no-no-no-no-lru-1core: src/ooo_cpu.cc:1649: void O3_CPU::execute_store(uint32_t, uint32_t, uint32_t): Assertion `0' failed.
+Aborted (core dumped)

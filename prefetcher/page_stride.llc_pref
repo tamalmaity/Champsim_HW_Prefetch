@@ -1,0 +1,146 @@
+//
+// From Data Prefetching Championship Simulator 2
+// Seth Pugsley, seth.h.pugsley@intel.com
+//
+
+/*
+
+  This file describes an page-based stride prefetcher.  
+  The prefetcher detects stride patterns coming from the same page, and then 
+  prefetches additional cache lines.
+
+  Prefetches are issued into LLC.
+
+ */
+
+#include "cache.h"
+
+#define PAGE_TRACKER_COUNT_LLC 1024
+#define PREFETCH_DEGREE_LLC 1
+
+class PAGE_TRACKER_LLC {
+  public:
+    // the page we're tracking
+    uint64_t page;
+
+    // the last address accessed by this page
+    uint64_t last_cl_addr;
+
+    // the stride between the last two addresses accessed by this page
+    int64_t last_stride;
+
+    // use LRU to evict old page trackers
+    uint32_t lru;
+
+    PAGE_TRACKER_LLC () {
+        page = 0;
+        last_cl_addr = 0;
+        last_stride = 0;
+        lru = 0;
+    };
+};
+
+PAGE_TRACKER_LLC trackers_llc[PAGE_TRACKER_COUNT_LLC];
+
+void CACHE::llc_prefetcher_initialize() 
+{
+    cout << "LLC Page-based stride prefetcher" << endl;
+    for (int i=0; i<PAGE_TRACKER_COUNT_LLC; i++)
+        trackers_llc[i].lru = i;
+}
+
+uint32_t CACHE::llc_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type, uint32_t metadata_in, uint64_t instr_id, uint64_t curr_cycle)
+{
+    // check for a tracker hit
+    uint64_t cl_addr = addr >> LOG2_BLOCK_SIZE;
+    uint64_t pg_addr = addr >> LOG2_PAGE_SIZE;
+
+    int index = -1;
+    for (index=0; index<PAGE_TRACKER_COUNT_LLC; index++) {
+        if (trackers_llc[index].page == pg_addr)
+            break;
+    }
+
+    // this is a new page that doesn't have a tracker yet, so allocate one
+    if (index == PAGE_TRACKER_COUNT_LLC) {
+
+        for (index=0; index<PAGE_TRACKER_COUNT_LLC; index++) {
+            if (trackers_llc[index].lru == (PAGE_TRACKER_COUNT_LLC-1))
+                break;
+        }
+
+        trackers_llc[index].page = pg_addr;
+        trackers_llc[index].last_cl_addr = cl_addr;
+        trackers_llc[index].last_stride = 0;
+
+        //cout << "[PAGE_STRIDE] MISS index: " << index << " lru: " << trackers_llc[index].lru << " ip: " << hex << ip << " cl_addr: " << cl_addr << dec << endl;
+
+        for (int i=0; i<PAGE_TRACKER_COUNT_LLC; i++) {
+            if (trackers_llc[i].lru < trackers_llc[index].lru)
+                trackers_llc[i].lru++;
+        }
+        trackers_llc[index].lru = 0;
+
+        return metadata_in;
+    }
+
+    // sanity check
+    // at this point we should know a matching tracker index
+    if (index == -1)
+        assert(0);
+
+    // calculate the stride between the current address and the last address
+    // this bit appears overly complicated because we're calculating
+    // differences between unsigned address variables
+    int64_t stride = 0;
+    if (cl_addr > trackers_llc[index].last_cl_addr)
+        stride = cl_addr - trackers_llc[index].last_cl_addr;
+    else {
+        stride = trackers_llc[index].last_cl_addr - cl_addr;
+        stride *= -1;
+    }
+
+    //cout << "[PAGE_STRIDE] HIT  index: " << index << " lru: " << trackers_llc[index].lru << " ip: " << hex << ip << " cl_addr: " << cl_addr << dec << " stride: " << stride << endl;
+
+    // don't do anything if we somehow saw the same address twice in a row
+    if (stride == 0)
+        return metadata_in;
+
+    // only do any prefetching if there's a pattern of seeing the same
+    // stride more than once
+    if (stride == trackers_llc[index].last_stride) {
+
+        // do some prefetching
+        for (int i=0; i<PREFETCH_DEGREE_LLC; i++) {
+            uint64_t pf_address = (cl_addr + (stride*(i+1))) << LOG2_BLOCK_SIZE;
+
+            // only issue a prefetch if the prefetch address is in the same 4 KB page 
+            // as the current demand access address
+            if ((pf_address >> LOG2_PAGE_SIZE) != (addr >> LOG2_PAGE_SIZE))
+                break;
+
+	      prefetch_line(ip, addr, pf_address, FILL_LLC, 0);
+        }
+    }
+
+    trackers_llc[index].last_cl_addr = cl_addr;
+    trackers_llc[index].last_stride = stride;
+
+    for (int i=0; i<PAGE_TRACKER_COUNT_LLC; i++) {
+        if (trackers_llc[i].lru < trackers_llc[index].lru)
+            trackers_llc[i].lru++;
+    }
+    trackers_llc[index].lru = 0;
+
+    return metadata_in;
+}
+
+uint32_t CACHE::llc_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t evicted_addr, uint32_t metadata_in)
+{
+  return metadata_in;
+}
+
+void CACHE::llc_prefetcher_final_stats()
+{
+    cout << "LLC PC-based stride prefetcher final stats" << endl;
+}
